@@ -27,7 +27,15 @@
 
 插件支持 AstrBot 4.24.2 及以上的 4.x 版本，并要求 Python 3.11 或更高版本。本插件**不依赖任何第三方 Python 包**：协议层只用标准库。
 
-### 从链接安装（推荐）
+### 从插件市场安装（推荐）
+
+在 AstrBot WebUI 中打开：
+
+“插件” → “AstrBot 插件” → “插件市场”
+
+搜索 `华为运动健康`（或插件标识 `astrbot_plugin_huawei_health`），点安装即可。从市场安装的版本可以直接在插件页检查更新，有新版时点一下就能升级。
+
+### 从链接安装
 
 在 AstrBot WebUI 中打开：
 
@@ -44,10 +52,6 @@ https://github.com/Stonogic086/astrbot_plugin_huawei_health
 ### 从文件安装
 
 从 GitHub Releases 下载名称形如 `astrbot_plugin_huawei_health-vX.Y.Z.zip` 的安装包。不要解压，在“安装插件 → 从文件安装”中直接上传 ZIP。GitHub 自动生成的 `Source code (zip)` 不是本项目的安装包。
-
-### 从插件市场安装
-
-尚未上架插件市场，请优先使用上面的链接安装。
 
 ## 第一次配置
 
@@ -164,11 +168,11 @@ https://github.com/Stonogic086/astrbot_plugin_huawei_health
 
 ## 更新插件
 
-如果通过仓库链接安装，可以在 AstrBot 的插件页面检查更新；更新后重新加载插件即可。数据库会自动走版本迁移（升级前自动生成一份带时间戳的备份）。
+无论通过插件市场、仓库链接还是文件安装，都可以在 AstrBot 的插件页面检查更新；更新后重新加载插件即可。数据库会自动走版本迁移（升级前自动生成一份带时间戳的备份）。
 
 ## 开发者信息
 
-架构分层、版本迁移链、失败处理、隐私边界与自检清单，见 [开发与维护说明](docs/DEVELOPMENT.md)。
+架构分层、版本迁移链、失败处理、隐私边界与自检清单，见 [开发与维护说明](docs/DEVELOPMENT.md)；版本发布口径与发版记录分别见 [版本发布流程](docs/RELEASE.md) 与 [版本维护日志](docs/MAINTENANCE.md)。
 
 ## 特别鸣谢
 

@@ -93,6 +93,4 @@ python3 scripts/selftest_sync.py           # 端到端同步一轮（真连云�
 
 ## 十、发布
 
-1. 跑完全部自检，确认真连云端那份通过。
-2. 更新 `metadata.yaml` 的版本号；必要时在 README 的更新日志补一条。
-3. 确认 `git ls-files | grep -Ei "\.db|token"` 为空，再提交与推送。
+发布口径已独立成文：[版本发布流程](RELEASE.md)（发版前准备清单与逐步流程）；每次发版的记录写在 [版本维护日志](MAINTENANCE.md)。本节不再重复流程，只保留一句底线：**自检未全绿、`git ls-files | grep -Ei "\.db|token|auth_state"` 非空时，不发版。**
