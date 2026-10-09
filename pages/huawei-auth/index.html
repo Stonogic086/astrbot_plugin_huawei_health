@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>华为运动健康 · 授权</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      font-size: 15px;
+      line-height: 1.6;
+      color: #1f2329;
+      background: #f5f6f7;
+    }
+    main { max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    h2 { font-size: 16px; margin: 0 0 8px; }
+    .hint { color: #6b7280; font-size: 13px; margin: 0 0 20px; }
+    section {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    button {
+      font: inherit;
+      padding: 8px 16px;
+      border: 0;
+      border-radius: 8px;
+      background: #1f4e79;
+      color: #fff;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .5; cursor: default; }
+    label { display: block; font-weight: 600; margin-bottom: 8px; }
+    textarea {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 84px;
+      padding: 8px;
+      font: inherit;
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 13px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      resize: vertical;
+    }
+    .url-box {
+      margin-top: 12px;
+      padding: 10px;
+      background: #f3f6fa;
+      border-radius: 8px;
+      word-break: break-all;
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 12px;
+    }
+    .url-box a { color: #1f4e79; }
+    #result {
+      white-space: pre-wrap;
+      word-break: break-all;
+      padding: 10px;
+      border-radius: 8px;
+      background: #f3f6fa;
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 13px;
+      min-height: 1.6em;
+    }
+    #result.ok { background: #e7f6ec; color: #12603a; }
+    #result.err { background: #fdeaea; color: #9b1c1c; }
+    #result.busy { background: #fff7e6; color: #8a5a00; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>华为运动健康 · 授权</h1>
+    <p class="hint">
+      页面只调用本插件后端：取授权链接 <code>auth/url</code>、提交回调串 <code>auth/code</code>。
+      请求前缀由宿主补全，页面不写任何绝对路径。token 一律由后端脱敏后再显示。
+    </p>
+
+    <!-- 1) 取授权链接并显示 -->
+    <section>
+      <h2>第 1 步：获取授权链接</h2>
+      <button id="btn-url" type="button">取授权链接</button>
+      <div class="url-box" id="url-box" hidden>
+        <div>请在浏览器里打开下面这条链接完成授权：</div>
+        <a id="url-link" href="#" target="_blank" rel="noopener"></a>
+      </div>
+    </section>
+
+    <!-- 2) 粘贴回调串 + 3) 提交 -->
+    <section>
+      <h2>第 2 步：提交回调串</h2>
+      <label for="callback">把浏览器里复制到的 hms:// 整行文字粘贴到这里</label>
+      <textarea id="callback" spellcheck="false"
+        placeholder="hms://redirect_url?code=...&amp;state=..."></textarea>
+      <div style="margin-top:10px;">
+        <button id="btn-submit" type="button">提交</button>
+      </div>
+    </section>
+
+    <!-- 结果区 -->
+    <section>
+      <h2>结果</h2>
+      <div id="result" class="busy">尚未操作。</div>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      "use strict";
+
+      function el(id) { return document.getElementById(id); }
+      // 宿主注入的桥；真实前缀由宿主补，这里只传相对子路径。
+      function page() {
+        return window.AstrBotPluginPage || window.AstrbotPluginPage || null;
+      }
+
+      function apiGet(path) {
+        var b = page();
+        if (!b || typeof b.apiGet !== "function") {
+          return Promise.reject(new Error("宿主未注入 AstrBotPluginPage.apiGet"));
+        }
+        return Promise.resolve(b.apiGet(path));
+      }
+
+      function apiPost(path, data) {
+        var b = page();
+        if (!b || typeof b.apiPost !== "function") {
+          return Promise.reject(new Error("宿主未注入 AstrBotPluginPage.apiPost"));
+        }
+        return Promise.resolve(b.apiPost(path, data || {}));
+      }
+
+      // 宿主可能直接返回 dict，也可能包一层 { data: dict } 或返回 JSON 字符串。
+      // 后者两种形态【未在框架内验证】，这里只做兜底兼容。
+      function normalize(res) {
+        var value = res;
+        if (typeof value === "string") {
+          try { value = JSON.parse(value); } catch (e) { return { _raw: res }; }
+        }
+        if (value && typeof value === "object" && value.data &&
+            typeof value.data === "object") {
+          return value.data;
+        }
+        return value || {};
+      }
+
+      function show(text, state) {
+        var box = el("result");
+        box.className = state || "";
+        box.textContent = text;
+      }
+
+      el("btn-url").addEventListener("click", function () {
+        show("正在获取授权链接…", "busy");
+        apiGet("auth/url").then(function (res) {
+          var payload = normalize(res);
+          var url = payload.url;
+          if (!url) {
+            show("后端未返回 url 字段：" + JSON.stringify(payload), "err");
+            return;
+          }
+          var link = el("url-link");
+          link.href = url;
+          link.textContent = url;
+          el("url-box").hidden = false;
+          show("已获取授权链接。请在浏览器打开并完成授权。", "ok");
+        }).catch(function (err) {
+          show("获取授权链接失败：" + (err && err.message ? err.message : String(err)), "err");
+        });
+      });
+
+      el("btn-submit").addEventListener("click", function () {
+        var text = (el("callback").value || "").trim();
+        if (!text) {
+          show("请先粘贴 hms:// 回调串。", "err");
+          return;
+        }
+        show("正在提交…", "busy");
+        apiPost("auth/code", { text: text }).then(function (res) {
+          var payload = normalize(res);
+          if (payload.ok) {
+            show(
+              "授权成功。\n" +
+              "配置落盘：" + (payload.persisted === true ? "已写入" : "未写入（仅内存生效）") + "\n" +
+              "uid：" + (payload.uid || "<未返回>") + "（后端已脱敏）\n" +
+              "access_token：" + (payload.access_token || "<未返回>") + "\n" +
+              "access_token 过期时间：" + (payload.access_token_expires_at || "<未知>") + "\n" +
+              "refresh_token：" + (payload.refresh_token || "<未返回>") + "\n" +
+              "refresh_token 过期时间：" + (payload.refresh_token_expires_at || "<未知>"),
+              "ok"
+            );
+          } else {
+            var stage = payload.stage ? ("（阶段：" + payload.stage + "）") : "";
+            show("授权失败" + stage + "：" + (payload.error || "后端未返回错误原因"), "err");
+          }
+        }).catch(function (err) {
+          show("提交失败：" + (err && err.message ? err.message : String(err)), "err");
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

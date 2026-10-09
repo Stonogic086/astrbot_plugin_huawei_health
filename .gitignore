@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 本地数据库与运行产物（绝不入库）
+*.db
+*.db-wal
+*.db-shm
+health.backup-*.db
+*.sqlite
+*.sqlite3
+.selftest_tmp/
+*.log
+
+# 凭据 / 本地状态（绝不入库）
+.auth_state.json
+token*.json
+*.token
+secrets*
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store

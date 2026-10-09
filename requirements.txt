@@ -1,0 +1,2 @@
+# 本插件无第三方依赖：协议层只用标准库（urllib / ssl / json / gzip / uuid / datetime），
+# 不 import httpx，也不 import homeassistant。

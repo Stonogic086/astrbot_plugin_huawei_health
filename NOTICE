@@ -1,0 +1,36 @@
+Third-party notices
+===================
+
+This plugin is distributed under the MIT License — see LICENSE
+(Copyright (c) 2026 Stonogic086).
+
+1. Ported protocol layer: and7ey/huawei_health
+-----------------------------------------------
+This plugin contains derivative work based on the Huawei Health Home Assistant
+integration by and7ey.
+
+Upstream project: https://github.com/and7ey/huawei_health
+Upstream author:  and7ey
+Upstream commit:  8785391c26663a107a6cfd7454c412b0c88066f1 (2026-10-02)
+Upstream files ported:
+                  custom_components/huawei_health/client.py
+                  custom_components/huawei_health/const.py
+Upstream license: MIT License, Copyright (c) 2026 and7ey
+                  Full text kept in LICENSE-and7ey-huawei_health.txt
+
+The ported code lives under adapters/ (huawei_health_cloud.py, const.py).
+Local modifications are limited to:
+  * const.py: added China-region session/data host constants measured on
+    2026-10-07 with a real CN account, placed first in SESSION_HOSTS /
+    APP_HOSTS. All upstream entries are preserved.
+  * huawei_health_cloud.py: file header note, plus an asyncio.to_thread async
+    facade appended at the end. The synchronous protocol body is copied
+    verbatim.
+
+2. Design reference only: astrbot_plugin_mi_fitness_health
+-----------------------------------------------------------
+Adapter abstraction shape, error-class naming style and config-schema layout
+reference astrbot_plugin_mi_fitness_health (MIT License, Copyright (c) 2026
+Aleksej Kubulashvili). No source code from that project is copied into this
+repository; it was consulted only while designing this plugin's own
+implementation.

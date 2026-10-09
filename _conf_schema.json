@@ -1,0 +1,273 @@
+{
+  "account": {
+    "type": "object",
+    "description": "华为账号与凭证",
+    "hint": "填写华为健康云凭证。refresh token 约 180 天有效，等同于健康数据的访问权；过期后需重新走一次授权（配置页的授权页生成链接并回收回调串；插件会在到期前 5 天 / 1 天私聊提醒）。token 字段只做界面遮罩，磁盘上仍是 600 权限的明文配置。",
+    "items": {
+      "uid": {
+        "type": "string",
+        "description": "华为账号 uid",
+        "hint": "换 token 成功后云端返回的用户标识（形如 4200862003004423xx），属于账号标识，插件在日志与回执里一律只回脱敏值。",
+        "default": ""
+      },
+      "access_token": {
+        "type": "string",
+        "password": true,
+        "description": "访问令牌 accessToken（敏感）",
+        "hint": "寿命数十分钟，插件会自动用 refreshToken 刷新，一般无需手工填写。",
+        "default": ""
+      },
+      "refresh_token": {
+        "type": "string",
+        "password": true,
+        "description": "刷新令牌 refreshToken（敏感、必填）",
+        "hint": "约 180 天有效。只填在你自己的插件配置页，不要发到聊天、截图或 Issue；插件不会把它写进日志。",
+        "obvious_hint": true,
+        "default": ""
+      },
+      "session_host": {
+        "type": "string",
+        "description": "会话域（换 token 用）",
+        "hint": "中国区实测可用值为 https://healthcommon-drcn.things.dbankcloud.com（resultCode 0）。.cn 结尾的会话域名 DNS 不存在。",
+        "default": "https://healthcommon-drcn.things.dbankcloud.com"
+      },
+      "data_host": {
+        "type": "string",
+        "description": "数据域（取数用）",
+        "hint": "中国区实测可用值为 https://healthdata.dbankcloud.cn。注意 EU 域 sportdata-dre.things.dbankcloud.com 会返回 resultCode 0 但空数组。",
+        "default": "https://healthdata.dbankcloud.cn"
+      },
+      "site_id": {
+        "type": "string",
+        "description": "siteId（可选）",
+        "hint": "登录响应里若有 siteId，插件会自动写回；一般无需手工填写。",
+        "default": ""
+      },
+      "access_token_expires_at": {
+        "type": "int",
+        "description": "accessToken 到期时间（epoch 秒，插件自动维护）",
+        "hint": "授权成功后自动写回，请勿手工填写。",
+        "default": 0,
+        "invisible": true
+      },
+      "refresh_token_expires_at": {
+        "type": "int",
+        "description": "refreshToken 到期时间（epoch 秒，插件自动维护）",
+        "hint": "授权成功后自动写回，用于到期前的重登提醒；请勿手工填写。",
+        "default": 0,
+        "invisible": true
+      }
+    }
+  },
+  "sync": {
+    "type": "object",
+    "description": "同步节奏",
+    "hint": "自动同步与对话按需刷新都已接入调度；默认值与开发计划 3.9 一致。",
+    "items": {
+      "enable_auto_sync": {
+        "type": "bool",
+        "description": "开启自动同步",
+        "hint": "默认关闭。开启后插件会按下面的间隔定期读取华为云并入库。",
+        "default": false
+      },
+      "sync_interval_minutes": {
+        "type": "int",
+        "description": "自动同步间隔（分钟）",
+        "hint": "对齐小米插件的普通自动同步间隔，默认 60 分钟。",
+        "default": 60,
+        "slider": {
+          "min": 5,
+          "max": 1440,
+          "step": 1
+        }
+      },
+      "natural_query_sync_minutes": {
+        "type": "int",
+        "description": "对话按需刷新间隔（分钟）",
+        "hint": "默认 15 分钟。",
+        "default": 15,
+        "slider": {
+          "min": 1,
+          "max": 120,
+          "step": 1
+        }
+      },
+      "default_sync_days": {
+        "type": "int",
+        "description": "每次同步最近几天",
+        "hint": "默认 3 天。",
+        "default": 3,
+        "slider": {
+          "min": 1,
+          "max": 90,
+          "step": 1
+        }
+      },
+      "training_min_duration_min": {
+        "type": "int",
+        "description": "有效训练最短时长（分钟）",
+        "hint": "不足这两个数的训练记录视为碎片，只入库不展示、不触发关怀。与下面的距离是「或」的关系：时长 ≥ 该值或距离 ≥ 距离阈值即算有效训练。手环自动产生的分钟级碎片两个阈值都不满足，仍写进本地库、不删除，但命令展示、LLM 摘要与运动后关怀都会把它过滤掉。默认 3 分钟。",
+        "default": 3
+      },
+      "training_min_distance_m": {
+        "type": "int",
+        "description": "有效训练最短距离（米）",
+        "hint": "不足这两个数的训练记录视为碎片，只入库不展示、不触发关怀。与上面的时长是「或」的关系。默认 300 米。",
+        "default": 300
+      }
+    }
+  },
+  "storage": {
+    "type": "object",
+    "description": "本地存储",
+    "hint": "入库已接入：六类数据写入插件数据目录下的 SQLite 库。",
+    "items": {
+      "database_path": {
+        "type": "string",
+        "description": "本地数据库路径（高级、可选）",
+        "hint": "留空则用插件数据目录下的 health.db；填了就按该路径建库（目录缺失会自动创建）。库文件是未加密的健康缓存，落盘后收 0600，勿放在同步盘或公开目录。",
+        "default": ""
+      }
+    }
+  },
+  "privacy": {
+    "type": "object",
+    "description": "隐私",
+    "hint": "健康数据默认不外送，仅供你本人通过命令 / 本地数据库查看。",
+    "items": {
+      "allow_health_data_to_llm": {
+        "type": "bool",
+        "description": "允许把健康数据送到 LLM",
+        "hint": "默认关闭（=不允许外送）。关闭时插件任何代码路径都不会把健康数据写进 LLM 请求或消息注入点，即使被误调用也会被隐私闸门拒绝。除非你清楚风险并确实需要，否则保持关闭。",
+        "obvious_hint": true,
+        "default": false
+      },
+      "llm_provider_allowlist": {
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "_special": "select_providers",
+        "description": "允许把健康数据送进上下文的模型（provider 名单）",
+        "hint": "从已配置的对话模型里多选，不用手打 id。留空＝永不注入；只有本轮实际使用的 provider 在名单内才会注入，降级到名单外模型不会注入。名单项按「完整 id」或「来源前缀」匹配（例如选中的 siliconflow/... 会命中同来源下同前缀的模型）。需同时打开上面的开关。",
+        "default": []
+      }
+    }
+  },
+  "proactive_care": {
+    "type": "object",
+    "description": "主动关怀",
+    "hint": "出厂默认全部关闭。打开总开关后，各场景开关才会生效。发送目标只能是已绑定的主人私聊（先在私聊里用一次查询命令即可绑定）；取不到目标一律不发。仅夜间场景保留发送前模型判断，其余场景不设判断。",
+    "items": {
+      "enable_proactive_care": {
+        "type": "bool",
+        "description": "主动关怀总开关",
+        "hint": "默认关闭。关闭时四个场景一律不发送任何主动消息。",
+        "obvious_hint": true,
+        "default": false
+      },
+      "enable_night_care": {
+        "type": "bool",
+        "description": "夜间关怀",
+        "hint": "默认关闭。深夜时段内、且主人最近仍在私聊时触发；每夜至多一次，发送前还会过一次模型判断（拿不准就不发）。",
+        "default": false,
+        "condition": {
+          "enable_proactive_care": true
+        }
+      },
+      "night_start": {
+        "type": "string",
+        "description": "夜间窗口开始（HH:MM）",
+        "hint": "默认 00:30，与结束时间一起构成深夜时段；支持跨零点（例如 23:00–06:00）。",
+        "default": "00:30",
+        "condition": {
+          "enable_proactive_care": true,
+          "enable_night_care": true
+        }
+      },
+      "night_end": {
+        "type": "string",
+        "description": "夜间窗口结束（HH:MM）",
+        "hint": "默认 06:00。",
+        "default": "06:00",
+        "condition": {
+          "enable_proactive_care": true,
+          "enable_night_care": true
+        }
+      },
+      "enable_stress_care": {
+        "type": "bool",
+        "description": "压力过大关怀",
+        "hint": "默认关闭。按当日压力日均分定档，达到配置档位（默认中等及以上）时触发；每天最多一条，只做关心安慰，不含任何医疗建议。",
+        "default": false,
+        "condition": {
+          "enable_proactive_care": true
+        }
+      },
+      "stress_threshold": {
+        "type": "string",
+        "description": "压力触发档位",
+        "hint": "默认 moderate（中等）。可选 relaxed（放松）/ normal（正常）/ moderate（中等）/ high（偏高）；按当日日均分定档（放松 1–29 / 正常 30–59 / 中等 60–79 / 偏高 80–99），达到该档及以上才触发。",
+        "default": "moderate",
+        "condition": {
+          "enable_proactive_care": true,
+          "enable_stress_care": true
+        }
+      },
+      "enable_wakeup_care": {
+        "type": "bool",
+        "description": "起床关怀",
+        "hint": "默认关闭。今日睡眠记录的起床时间匹配当前日期、且距现在不超过宽容度时触发；不区分主睡眠与白天小睡，同一条记录只触发一次。",
+        "default": false,
+        "condition": {
+          "enable_proactive_care": true
+        }
+      },
+      "wakeup_tolerance_minutes": {
+        "type": "int",
+        "description": "起床关怀宽容度（分钟）",
+        "hint": "默认 30 分钟。起床时间距现在超过该值就不再发送（避免补发昨晚的问候）。",
+        "default": 30,
+        "slider": {
+          "min": 0,
+          "max": 180,
+          "step": 1
+        },
+        "condition": {
+          "enable_proactive_care": true,
+          "enable_wakeup_care": true
+        }
+      },
+      "enable_workout_care": {
+        "type": "bool",
+        "description": "运动后关怀",
+        "hint": "默认关闭。发现新训练记录即触发；每轮每场景最多一条，按记录去重，不设次数上限。不足 sync 分组训练阈值的碎片记录不触发。",
+        "default": false,
+        "condition": {
+          "enable_proactive_care": true
+        }
+      },
+      "workout_tolerance_minutes": {
+        "type": "int",
+        "description": "运动后关怀宽容度（分钟）",
+        "hint": "默认 10 分钟。运动结束时间距本轮发现时刻不超过该值 → 关怀建议 + 信息展示；更远 → 只做信息展示并致歉（只服务真新增、只是发现晚的记录）。",
+        "default": 10,
+        "slider": {
+          "min": 0,
+          "max": 120,
+          "step": 1
+        },
+        "condition": {
+          "enable_proactive_care": true,
+          "enable_workout_care": true
+        }
+      }
+    }
+  },
+  "_config_layout_version": {
+    "type": "int",
+    "description": "配置布局版本",
+    "default": 0,
+    "invisible": true
+  }
+}
