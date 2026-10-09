@@ -3,7 +3,7 @@ display_name: 华为运动健康
 version: v0.1.0
 author: Stonogic086
 repo: https://github.com/Stonogic086/astrbot_plugin_huawei_health
-desc: 读取华为运动健康云数据（步数、睡眠、心率、压力、血氧、训练），走服务器侧轮询，不依赖手机 App。
+desc: 读取华为运动健康云数据（步数、睡眠、心率、压力、血氧、训练），并使聊天Bot在对话中自然地关心你的健康。
 short_desc: 服务器侧读取华为运动健康云数据，让 Bot 更自然地关心用户近况。
 astrbot_version: ">=4.24.2,<5"
 support_platforms:
@@ -22,5 +22,5 @@ tags:
   - 运动健康
   - 华为
   - 主动关怀
-category: 三方集成
+category: 生活
 pages: [huawei-auth]
