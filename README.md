@@ -1,128 +1,161 @@
-# astrbot_plugin_huawei_health
+# Astrbot 华为运动健康
 
-华为运动健康数据接入 AstrBot。目标：把华为手环的数据（步数、睡眠、心率、压力、
-血氧、训练）走服务器侧轮询接入，不经手机 App。
+可以让 astrbot 获取华为运动健康的数据，并可供聊天机器人（LLM）使用或通过查询指令进行查询。
 
-当前进度：**v1 已完成** —— 协议层移植、授权交互（配置页 + 授权页回调）、定时同步、
-对话按需刷新、SQLite 入库、查询命令、隐私闸门、180 天重登私聊提醒，配套 12 个自检脚本。
+配置完成后，你只需要像平时一样和 Bot 聊天。例如说“早啊，今天不太想起床”“今天好累”“刚散步回来”“还在加班”或“晚安”。当聊天内容与作息、疲劳或活动有关时，插件会在后台准备少量相关数据，让 Bot 继续按照原有模型和人格自然接话。
 
-## 目录结构
+正常情况下，Bot 不会报出一整张数据表，也不会告诉你“刚刚调用了插件”。数据与当前话题无关、没有可用记录或不适合提及时，Bot 仍会像普通对话一样回复。直接查询数据和命令功能仍然保留，但主要用于核对数据与排查连接问题。
 
-```
-astrbot_plugin_huawei_health/
-├── main.py                       # 插件主类：配置读写、存储/同步/提醒接线、授权路由、查询命令
-├── metadata.yaml                 # 插件元数据（pages: [huawei-auth]）
-├── _conf_schema.json             # 配置 schema（token 用 password 字段做界面遮罩）
-├── requirements.txt              # 无第三方依赖
-├── LICENSE / NOTICE              # 上游 MIT 许可与来源声明
-├── privacy_gate.py               # 隐私闸门（fail-closed）+ 唯一的脱敏实现 mask_secret
-├── reminder.py                   # 180 天重登提醒（去重落盘、async 发送、只记私聊目标）
-├── adapters/                     # 协议层（移植自 and7ey/huawei_health）
-│   ├── const.py                  # 协议常量（含中国区主机，注明实测来源与日期）
-│   └── huawei_health_cloud.py    # 同步协议客户端 + asyncio.to_thread 异步门面
-├── storage/                      # 存储层（纯标准库 sqlite3，不依赖 astrbot）
-│   ├── models.py                 # 数据模型与字段映射（纯函数归一化，含单位换算）
-│   ├── schema.py                 # 唯一表结构定义：SCHEMA_VERSION / DDL / 字段口径注释
-│   ├── migrations.py             # schema 版本迁移链 + 升级前备份（幂等、失败显式报错）
-│   ├── health_store.py           # HealthStore：建库迁移 / 幂等写入 / 同步状态 / 查询
-│   └── __init__.py               # 对外导出 HealthStore、SCHEMA_VERSION
-├── services/                     # 服务层
-│   ├── sync_service.py           # SyncService：一轮「最近 N 天 → 六类数据 → 写库」
-│   └── ondemand_refresh.py       # OnDemandRefresher：查询前的按需刷新闸门
-├── commands/                     # 查询命令层（只读库、不调用 LLM）
-│   ├── health_query.py           # 参数解析 + 中文渲染（纯函数）
-│   ├── handlers.py               # async generator handler（可 stub event 自检）
-│   └── __init__.py               # 对外导出命令名与 handler
-├── features/                     # 特性模块（纯逻辑，不依赖运行期框架上下文）
-│   └── llm_injection.py          # 健康摘要注入 LLM 上下文（多重前置门 + fail-closed）
-├── pages/huawei-auth/index.html  # 授权页（生成授权链接 + 回收回调串）
-└── scripts/                      # 自检脚本（见「自检」一节）
-```
+> 插件读取的是华为云端已经上传的历史记录，不连接手环蓝牙，也不是实时监护或医疗诊断工具。
 
-## 运行期行为（v1）
+## 可以读取哪些数据
 
-- **定时同步**：`sync.enable_auto_sync`（默认关闭）打开后，后台循环按
-  `sync.sync_interval_minutes`（默认 60 分钟）拉最近 `sync.default_sync_days`（默认 3 天）
-  的六类数据并入库；同一循环顺带做一次重登提醒检查。
-- **对话按需刷新**：查询命令读库前，若距上次成功同步已超过
-  `sync.natural_query_sync_minutes`（默认 15 分钟），先同步一轮再读库；失败 / 超时一律兜住并回退读旧数据。
-- **重登提醒**：refresh token 到期前 5 天、1 天各提醒一次，同一窗口只提醒一次（去重落盘，重启不重复）；
-  只记私聊来源的会话，提醒走私聊。
-- **授权**：配置页的授权页生成链接 → 浏览器里走一次 → 把 `hms://` 回调串贴回 →
-  `POST /<插件名>/auth/code` 换 token 并写回配置；同步轮里刷新出的新 token 也会立刻回写
-  （云端真轮换 refresh token 时，配置里不会留旧值）。
-- **隐私**：健康数据默认不外送（`privacy.allow_health_data_to_llm=false`）；命令输出只回给使用者本人。
+- 活动（按天汇总）：步数、距离、卡路里、步行分钟、活动小时、运动分钟、步数目标
+- 心率（日值）：静息心率、平均静息心率、日最高心率、日最低心率
+- 睡眠（按天）：总时长、睡眠评分、睡眠效率、HRV、血氧，以及入睡时间、起床时间与白天小睡时长
+- 压力（按天）：日均分、最近一次、最高、最低、测量次数
+- 血氧（按天）：睡眠期间的平均血氧
+- 训练（按会话）：运动类型、时长、距离、卡路里、段数、设备码
 
-## 存储层（SQLite）
+> 由于华为云端限制，读取到的数据并非元数据，而是以日期为单位的数据样本。
 
-- 库文件：默认 `<插件数据目录>/health.db`
-  （即 `/vol1/@appdata/astrbot/data/plugin_data/astrbot_plugin_huawei_health/health.db`）；
-  也可在配置里用 `storage.database_path` 指定路径。目录 / 文件缺失自动创建，落盘后收 0600。
-- 时间一律按本地时间（CST）存文本：日期 `YYYY-MM-DD`，时间 `YYYY-MM-DD HH:MM:SS`。
-- 幂等：每张表以日期或 `session_key` 作主键，写入用 `INSERT ... ON CONFLICT(...) DO UPDATE`，
-  冲突时逐列 `COALESCE(新值, 旧值)`——重复同步不产生重复行，且本次没取到的字段保留库中旧值。
-- 写入接口：`upsert_daily_activity(records)`（日汇总，带「聚合行 / 读数非空」护栏）与
-  `upsert_rows(model, rows)`（门面口径的归一化行直写）；
-  查询接口：`query(model, start, end)` / `get(model, key)` / `count(model)` / `tables()`。
-- **schema 版本**：`SCHEMA_VERSION = 2`。新库一次建到最新版；旧库在 `initialize()` 里先在同目录生成
-  带时间戳的备份副本，再按版本号顺序迁移（每步在事务里，失败回滚并显式抛错，不静默半迁移；
-  备份失败同样报错停下）。库版本高于插件支持的版本时拒绝打开，不做降级迁移。
-- **迁移链**：v1 = 六张业务表（含 `sleep_session` 的入睡/起床/小睡三列）与训练索引；
-  v2 = `sync_state`（每类数据的同步状态）与 `meta`（插件名、首次建库、最近升级与备份记录）。
-- **状态与元信息表**（非业务数据）：`sync_state(data_type 主键：最近尝试/成功时间、状态、窗口上界、失败原因)`
-  与 `meta(key/value：plugin、schema_created_at、schema_upgraded_at、last_backup_file、last_backup_at)`，
-  另有单行 `schema_version`。
+部分数据是否可用，取决于设备型号、所在区域以及云端实际上传的内容。没有显示某项数据，不代表设备不支持。
 
-| 表 | 主键 | 关键字段（类型） | 来源 |
-| --- | --- | --- | --- |
-| `daily_activity` | date | steps(int)/distance_m(int,米)/kcal(real,千卡)/duration_min(int)/walk_min(int)/active_hours(int)/exercise_min(int)/step_goal(int) | getSportsStat（按日期唯一） |
-| `heart_rate_sample` | date | resting_hr/day_hr/average_resting_hr/max_hr/min_hr(real)；sample_kind='daily_summary'（汇总型样本） | getHealthStat type 7 heartRateBasic |
-| `sleep_session` | date | duration_min/score/efficiency/hrv/spo2/nap_duration_min(real)；fall_asleep_local/wakeup_local(text, `YYYY-MM-DD HH:MM:SS`) | getHealthStat type 9 professionalSleep（入睡/起床取 fallAsleepTime/wakeupTime；小睡取 daySleepTime） |
-| `stress_sample` | date | average/last_value/max_value/min_value/measurements | getHealthStat type 11 stressBasic |
-| `spo2_sample` | date | spo2(real)；sample_kind='sleep_last_avg' | 睡眠响应 professionalSleep.lastAvgSpO2 |
-| `training_session` | session_key=`<sport_type>:<start_ms>` | sport_type/duration_min/distance_m/kcal/segments/device_code | getSportsDataByTime（dataId 去重，间隔 ≤15 分钟合并） |
+两点如实说明：心率与睡眠只有**日汇总粒度**（华为云端不提供样本级心率与会话级睡眠明细），插件按汇总口径展示，不推算时间点、不拆分分钟数；训练记录里时长不足 3 分钟且距离不足 300 米的短记录会被视为**碎片**，只入库并标注，不出现在展示与主动关怀里（阈值可在配置页调整）。
 
-单位换算：上游 `calorie` 为千分之一 kcal，入协议层整形时 `/1000` 存为 `kcal`（存储层原样入库）；
-`distance` 上游即米，原样存 `distance_m`。`BodyMeasurement` 已下线：不建表、不提供接口。
+## 安装插件
 
-## 关键事实（已实测）
+插件支持 AstrBot 4.24.2 及以上的 4.x 版本，并要求 Python 3.11 或更高版本。本插件**不依赖任何第三方 Python 包**：协议层只用标准库。
 
-- 中国区会话域（换 token）：`https://healthcommon-drcn.things.dbankcloud.com`，实测 `resultCode 0`。
-- 中国区数据域（取数）：`https://healthdata.dbankcloud.cn`，实测取到最近 3 天日汇总。
-  EU 域 `sportdata-dre.things.dbankcloud.com` 会返回 `resultCode 0` 但空数组，不能当作成功。
-- `client_id / appId = 10414141`，对中国区账号实测可用。
+### 从链接安装（推荐）
 
-## 自检
+在 AstrBot WebUI 中打开：
 
-12 个脚本，`selftest_protocol.py` / `selftest_sync.py` / `selftest_webapi.py` 会真连华为云（只读），
-其余全部离线；都不启动 AstrBot、不改插件配置、不碰真实 `health.db`。
+“插件” → “AstrBot 插件” → “安装插件” → “从链接安装”
 
-```bash
-python3 scripts/import_check.py           # 静态 import 自检（astrbot 桩，不联网）
-python3 scripts/selftest_protocol.py      # 协议层：刷新 token + 拉最近 N 天日汇总（只读、联网）
-python3 scripts/selftest_webapi.py        # 两条授权路由 + persist_tokens（含一次真刷新）
-python3 scripts/selftest_network_retry.py # 网络层重试（域名故意不可解析，不联网）
-python3 scripts/selftest_storage.py       # 存储层：建表/写入/幂等/区间/单位换算（临时库）
-python3 scripts/selftest_migrations.py    # 迁移链：新库建到最新版/幂等/旧库无损升级/备份/失败回滚（临时库）
-python3 scripts/selftest_sync.py          # 完整一轮同步 → 落库 → 读回（云端只读，临时库）
-python3 scripts/selftest_commands.py      # 三个查询命令的渲染、无数据分支与身份门（临时库）
-python3 scripts/selftest_privacy.py       # 隐私闸门 + 重登提醒（含 async 发送路径、私聊目标）
-python3 scripts/selftest_ondemand.py      # 按需刷新（假时钟 + 假 run_once）
-python3 scripts/selftest_facade.py        # 取数门面：云端原始响应 → 存储层口径（桩适配器）
-python3 scripts/selftest_llm_injection.py # LLM 注入的多重前置门（闸门 / provider 白名单 / fail-closed）
+粘贴：
+
+```text
+https://github.com/Stonogic086/astrbot_plugin_huawei_health
 ```
 
-## 关键约束
+这条路径的可行性：AstrBot 支持从公开 Git 仓库链接安装；本仓库是纯 Python 单包，没有子模块、二进制或构建步骤，安装后可以直接在插件页检查更新。
 
-- token 只在配置页做界面遮罩（框架不加密），不进日志、不进报告；插件内脱敏只有
-  `privacy_gate.mask_secret` 一处实现。
-- 库文件与提醒状态文件落盘后收 0600。
-- 健康数据只回给使用者本人：查询命令有身份门（`_is_owner`，只放行框架管理员=本人，拿不到
-  结构化身份字段即拒绝）；出站闸门（`privacy_gate.py`）默认关闭，当前唯一的出站路径是
-  `features/llm_injection.py`（闸门打开且本轮 provider 在白名单内才注入 LLM 上下文）。
-- v2 待做：睡眠分期明细入库、分钟级心率逆向探索、训练效率等扩展指标。
+### 从文件安装
 
-## 许可
+从 GitHub Releases 下载名称形如 `astrbot_plugin_huawei_health-vX.Y.Z.zip` 的安装包。不要解压，在“安装插件 → 从文件安装”中直接上传 ZIP。GitHub 自动生成的 `Source code (zip)` 不是本项目的安装包。
 
-协议层移植自 [and7ey/huawei_health](https://github.com/and7ey/huawei_health)（MIT），
-见 `LICENSE` 与 `NOTICE`。使用非官方接口可能违反华为服务条款，责任在使用者本人。
+### 从插件市场安装
+
+尚未上架插件市场，请优先使用上面的链接安装。
+
+## 第一次配置
+
+### 第一步：完成华为账号授权
+
+1. 在 AstrBot WebUI 打开“插件 → 华为运动健康 → 授权”页；
+2. 点“取授权链接”，用电脑浏览器打开（建议按 `F12` 切到移动设备模式），登录你的华为账号并点“允许”；
+3. 在浏览器控制台或地址栏里找到以 `hms://` 开头的整行回调串，完整复制；
+4. 回到授权页，把它整行粘贴到“提交回调串”，点“提交”。
+
+成功后令牌会写回插件配置（界面只显示脱敏结果，不回显明文）。`refresh_token` 有效期约 180 天，临近到期时插件会在私聊里提前提醒重新登录。
+
+### 第二步：让命令认识你
+
+插件里的查询命令只对 AstrBot 管理员开放，避免同一机器人上的其他人读到你的健康数据：
+
+1. 私聊 Bot 发送 `/sid`，记下返回的 `UID`；
+2. 把这串 ID 加进 AstrBot 全局配置的 `admins_id` 列表；
+3. 自己在私聊里发一次 `/健康活动`，能返回数据即表示身份门通过——同时这次私聊会被记为主动关怀的发送目标。
+
+> 如果命令完全没有任何回应，通常就是这一步没做：身份门默认静默拒绝，不返回提示文案。
+
+### 第三步：按需打开开关
+
+- **同步节奏**：默认自动同步开启、间隔 60 分钟；对话按需刷新按 15 分钟节流。想少发云端请求可以把间隔调大。
+- **允许健康数据送到 LLM**：默认关闭。想让 Bot 在聊天中自然提及你的数据，需要打开它，并在“模型名单”里**多选**允许接收的模型。
+- **主动关怀**：默认全部关闭。打开总开关后，四个场景开关才会出现；每个场景自己的阈值还要在该场景开关打开后才显示。
+
+### 第四步：确认连接
+
+私聊发送 `/健康活动`（默认最近 3 天）核对数据。若提示没有记录，先确认华为运动健康 App 里确实已把数据同步到云端——插件读的是云端已上传的历史记录。
+
+## LLM 对数据的调用方式
+
+**方式一：聊天时自动注入（推荐）**
+
+聊天过程中，插件把一份最小健康摘要作为**临时内容**附在本轮请求上，让模型自然接话：
+
+- 前置条件：打开“允许健康数据送到 LLM”，且**本轮实际使用的模型在信任名单内**；名单留空等于永不注入。
+- 摘要内容：最近 3 天的活动与训练、当天的压力与血氧等，缺失字段一律写成“无”。
+- 注入形式是临时内容块，只在本轮生效、不写入长期会话历史。
+- 若本轮模型失败并降级到名单外的备用模型，插件会跳过本轮注入。
+- 链路中任何一步失败（拿不到框架挂载点、开关关闭、模型对不上、摘要为空、临时内容写不进去），都退化为“不带健康数据的普通回答”，不报错、不中断聊天。
+
+**方式二：直接问 Bot**
+
+用下面三条命令，插件直接读本地数据库并渲染中文文本，不经过模型：
+
+| 命令 | 用途 |
+| --- | --- |
+| `/健康活动 [天数]` | 最近 N 天活动汇总，默认 3 天 |
+| `/健康睡眠 [YYYY-MM-DD]` | 指定日期的睡眠汇总与心率日值，默认今天 |
+| `/健康训练 [天数]` | 最近 N 天训练会话列表，默认 7 天 |
+
+**本插件不向模型暴露取数工具**：模型无法自行调取任意原始记录，只能看到方式一里那份最小摘要，或由你直接看命令输出。
+
+## 主动关心是怎样工作的
+
+主动关怀是插件主动发消息给你的功能，**出厂默认全部关闭**。
+
+- **总开关**：关闭时四个场景一律不发送任何主动消息。
+- **夜间关怀**：在设定的深夜窗口内，且你最近确实还在私聊时触发；每夜至多一次，发送前还会过一次模型判断——你刚说过“要睡了”“晚安”，或者模型拿不准，就保持安静。
+- **压力关怀**：按当日压力日均分定档（默认“中等及以上”触发），只做关心与安慰，不做医疗建议与诊断。
+- **起床关怀**：当天有新增睡眠记录、且记录里的起床时间就是当天，才会触发；开场问候词按当前时刻自动判定（凌晨、上午、下午、晚上）。
+- **运动后关怀**：有新训练会话触发，每次一条；结束时间与发现时间相近时给关怀建议，发现得晚则只做信息展示并致歉。碎片记录不会触发。
+
+共同护栏：同一事件只发一次、每轮每个场景最多一条、同一自然日所有场景合计有上限、发送目标只能是已绑定的主人私聊；取不到目标一律不发。
+
+## 隐私说明
+
+- 健康数据只允许配置的使用者在指定 Bot 私聊中读取，群聊不会返回任何健康数据。
+- “允许健康数据送到 LLM”默认关闭，且需要同时把模型加进信任名单；名单为空即永不注入。
+- 注入内容作为临时内容块附加在本轮请求上，不进入长期会话历史；链路任一步失败即退化为普通回答。
+- 主动关怀只发往已绑定的主人私聊，四场景出厂全部关闭；夜间场景还会额外过一次模型判断。
+- 日志与用户可见错误一律脱敏：令牌不回显、UID 按掩码显示，健康数值不写进日志。
+- 本地数据库（含升级前自动生成的备份副本）是**未加密**的 SQLite 文件，插件侧以 `0600` 权限保存；请保护好 AstrBot 的数据目录，必要时启用磁盘加密。
+- 授权页里的 `refresh_token` 等价于你账号的健康数据访问权，不要放进聊天、截图、Issue 或群聊。
+- 提交 Issue 时不要附带令牌、原始健康记录或包含这些内容的截图。
+
+## 管理和排查命令
+
+日常聊天不需要这些命令，只在首次连接或排查问题时使用：
+
+| 命令 | 用途 |
+| --- | --- |
+| `/健康活动 [天数]` | 最近 N 天活动汇总 |
+| `/健康睡眠 [日期]` | 指定日期的睡眠与心率日值 |
+| `/健康训练 [天数]` | 最近 N 天训练会话（含碎片计数提示） |
+
+常见现象与处理：
+
+- **命令毫无回应**：身份门没过——把 `/sid` 得到的 UID 加进 `admins_id`，或确认是在私聊里发送。
+- **回“没有活动记录”**：云端这段时间确实没有数据，先在华为运动健康 App 里完成一次同步。
+- **训练列表提示“另有 N 条碎片记录未计入”**：这些是设备自动识别的短记录（默认不足 3 分钟且不足 300 米），可通过配置页的两个阈值调整口径。
+- **聊天里看不到数据**：确认隐私开关已打开，且当前对话模型在信任名单内。
+- **同步失败**：认证失效会在私聊提醒重新授权；网络类错误会在下一轮自动重试。
+
+## 更新插件
+
+如果通过仓库链接安装，可以在 AstrBot 的插件页面检查更新；更新后重新加载插件即可。数据库会自动走版本迁移（升级前自动生成一份带时间戳的备份）。
+
+## 开发者信息
+
+架构分层、版本迁移链、失败处理、隐私边界与自检清单，见 [开发与维护说明](docs/DEVELOPMENT.md)。
+
+## 特别鸣谢
+
+- 云端协议层移植自：[and7ey/huawei_health](https://github.com/and7ey/huawei_health)（MIT License）
+- AstrBot 端的功能设计、配置形态与主动关怀的部分提示词文案参考自：[AstrBot 小米运动健康](https://github.com/utrgdfg/astrbot_plugin_mi_fitness_health)（MIT License, Aleksej Kubulashvili）
+
+两份上游许可全文随仓库提供：`LICENSE-and7ey-huawei_health.txt` 与 `LICENSE-astrbot_plugin_mi_fitness_health.txt`；完整声明见 `NOTICE`。
