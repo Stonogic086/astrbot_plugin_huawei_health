@@ -27,10 +27,20 @@ Local modifications are limited to:
     facade appended at the end. The synchronous protocol body is copied
     verbatim.
 
-2. Design reference only: astrbot_plugin_mi_fitness_health
+2. Prompt text reused: astrbot_plugin_mi_fitness_health
 -----------------------------------------------------------
-Adapter abstraction shape, error-class naming style and config-schema layout
-reference astrbot_plugin_mi_fitness_health (MIT License, Copyright (c) 2026
-Aleksej Kubulashvili). No source code from that project is copied into this
-repository; it was consulted only while designing this plugin's own
-implementation.
+Some prompt text used by the proactive-care night scenario is taken verbatim
+from astrbot_plugin_mi_fitness_health (MIT License, Copyright (c) 2026
+Aleksej Kubulashvili). Full license text kept in
+LICENSE-astrbot_plugin_mi_fitness_health.txt.
+
+Reused verbatim (prompt text only):
+  * the "is a late-night care message worth sending right now" decision prompt;
+  * the private-context template that wraps the recent chat lines;
+  * the wording instruction for the composed message (length / tone rules).
+
+The surrounding implementation is written independently for this project:
+`features/proactive_care.py` shows ~3% line-level overlap with its upstream
+counterpart and shares no method names. That project was additionally consulted
+as a design reference only (adapter abstraction shape, error-class naming
+style, config-schema layout).
