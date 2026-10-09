@@ -26,4 +26,5 @@ develop/huawei_health_plugin/archive/开发计划_归档_2026-10-09.md
 - 每次发版严格按 `RELEASE.md` 走，不在别处另立口径。
 - 每次发版后在本文件追加一行，注明日期、版本、变更要点与验收结果。
 - 归档的开发计划为只读历史，不再回填；新决策写进本日志或 `DEVELOPMENT.md`。
-- 待办：`metadata.yaml` 可补 `repo`、`tags`、`support_platforms` 三个可选字段，让市场页信息更完整；改动属于元数据微调，不构成功能变更，可随下一个版本一并提交。
+- 2026-10-09 元数据补全：`metadata.yaml` 已补 `repo`、`tags`、`support_platforms` 三个可选字段，版本号保持 `v0.1.0` 不变，不构成版本变更。`support_platforms` 按主流适配器声明，依据是插件代码不含任何平台适配器特判；尚未逐平台实测，若某平台出现主动消息发不出的情况，收窄该列表即可。
+- v0.1.0 的 Release 附件保持打 tag 时刻的内容，其中的 metadata 不含上述三个新字段；不影响安装与运行，新字段随下一个版本自然带上。
