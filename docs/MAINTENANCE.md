@@ -27,4 +27,5 @@ develop/huawei_health_plugin/archive/开发计划_归档_2026-10-09.md
 - 每次发版后在本文件追加一行，注明日期、版本、变更要点与验收结果。
 - 归档的开发计划为只读历史，不再回填；新决策写进本日志或 `DEVELOPMENT.md`。
 - 2026-10-09 元数据补全：`metadata.yaml` 已补 `repo`、`tags`、`support_platforms` 三个可选字段，版本号保持 `v0.1.0` 不变，不构成版本变更。`support_platforms` 按主流适配器声明，依据是插件代码不含任何平台适配器特判；尚未逐平台实测，若某平台出现主动消息发不出的情况，收窄该列表即可。
+- 2026-10-09 分类补全：`metadata.yaml` 新增 `category: 三方集成`（市场 7 个分类为三方集成、生活、工具、长期记忆、知识库、娱乐、其他，值须写中文字面量）。该字段不在官方发布文档的字段表内，但市场实际支持，已有插件如此声明并生效（如 `astrbot_plugin_youshusearch`）；官方文档未收录，属约定俗成用法。改完需在 Cloud 发布页对该插件重新提交一次，市场才会重新解析分类。若解析后仍未生效，可到 AstrBot Cloud 的反馈仓库 `AstrBotDevs/astrbot-cloud-issues` 提 issue 请审核侧设置。
 - v0.1.0 的 Release 附件保持打 tag 时刻的内容，其中的 metadata 不含上述三个新字段；不影响安装与运行，新字段随下一个版本自然带上。
