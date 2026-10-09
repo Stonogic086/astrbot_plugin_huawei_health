@@ -54,9 +54,26 @@ https://github.com/Stonogic086/astrbot_plugin_huawei_health
 ### 第一步：完成华为账号授权
 
 1. 在 AstrBot WebUI 打开“插件 → 华为运动健康 → 授权”页；
-2. 点“取授权链接”，用电脑浏览器打开（建议按 `F12` 切到移动设备模式），登录你的华为账号并点“允许”；
-3. 在浏览器控制台或地址栏里找到以 `hms://` 开头的整行回调串，完整复制；
-4. 回到授权页，把它整行粘贴到“提交回调串”，点“提交”。
+
+2. 点“取授权链接”，用电脑浏览器打开（推荐 Chrome 或其他带控制台的浏览器）；
+
+3. 按 `F12` 打开浏览器控制台，再按 `Ctrl` + `Shift` + `M`（Mac 为 `Command` + `Shift` + `M`）切到移动设备模式；
+
+4. **刷新页面**（以确保伪装成移动设备登录），然后登录你的华为账号并点“ALLOW（允许）”；
+
+5. 在浏览器控制台或地址栏里找到以 `hms://redirect_url?code=` 开头的整行回调串，完整复制；
+
+   > 如果点击允许但页面没有任何变化，请在控制台中找到类似下面这一条：
+   >
+   > ![控制台中的 hms:// 报错示意](docs/authorize-console-error.png)
+   >
+   > 右键该栏并复制。
+   >
+   > 被复制的内容形如：Failed to launch '**hms://redirect_url?code=……**' because the scheme does not have a registered handler.
+   >
+   > 其中仅 `hms://redirect_url?code=` 开头的这部分是有用的。
+
+6. 回到授权页，把 `hms://redirect_url?code=` 开头的**整行**（含 code）粘贴到“提交回调串”，点“提交”。
 
 成功后令牌会写回插件配置（界面只显示脱敏结果，不回显明文）。`refresh_token` 有效期约 180 天，临近到期时插件会在私聊里提前提醒重新登录。
 
