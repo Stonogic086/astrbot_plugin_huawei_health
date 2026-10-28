@@ -24,7 +24,7 @@
 | `features/` | LLM 上下文注入、主动关怀编排 | 纯逻辑优先，框架依赖放在 `try/except` 里 fail-closed |
 | `commands/` | 命令解析与展示渲染 | 只管渲染与门禁，不直接取数、不直接写库 |
 | `pages/` | 插件配置页里的授权页（生成链接 / 回收回调串） | 页面只调后端，不写绝对路径 |
-| `scripts/` | 自检脚本（12 份） | 全部离线可跑，真连云端那份单独标注 |
+| `scripts/` | 自检脚本（13 份） | 全部离线可跑，真连云端那份单独标注 |
 
 入口 `main.py` 只负责装配：配置读取、生命周期钩子、命令注册、后台循环启停；具体逻辑一律下沉到上述模块。
 
@@ -72,6 +72,7 @@ python3 scripts/selftest_protocol.py       # 协议层（真连云端，只读�
 python3 scripts/selftest_network_retry.py  # 重试与退避
 python3 scripts/selftest_facade.py         # 取数门面与异常分流
 python3 scripts/selftest_llm_injection.py  # 注入链：白名单、降级、临时内容
+python3 scripts/selftest_llm_tools.py     # LLM 主动工具：结果、四道门、注入开关
 python3 scripts/selftest_care.py           # 主动关怀四场景与护栏
 python3 scripts/selftest_sync.py           # 端到端同步一轮（真连云端）
 ```

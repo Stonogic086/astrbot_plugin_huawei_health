@@ -6,7 +6,7 @@
   1. 名单内注入（前缀命中 / 完整 id 命中 / event 回落到宿主 API 取 provider）；
   2. 名单外不注入（含「子串不算命中」「空名单＝永不注入」）；
   3. 降级到名单外模型不注入（同一插件与配置，仅 provider 不同 → 结论随 provider 变）；
-  4. 未授权不注入（隐私闸门关闭）；
+  4. 范围与授权不注入（非所有者 / 群聊 / 隐私闸门关闭）；
   5. 摘要渲染缺失一律写「无」（含部分缺失、store 不可用返回空摘要）；
   6. 任一步失败退化成「不注入」且不抛错（存储抛错 / 事件与回落都抛错 / req 无承载处 /
      框架挂载点缺失 / TextPart 无 mark_as_temp / 空文本）。
@@ -74,9 +74,19 @@ class FakeContext:
 class FakeEvent:
     """最小 event 桩：selected_provider 走 get_extra，拿不到交给宿主回落。"""
 
-    def __init__(self, selected: object = None, umo: str = "aiocqhttp:FriendMessage:10001"):
+    def __init__(self, selected: object = None,
+                 umo: str = "aiocqhttp:FriendMessage:10001",
+                 admin: bool = True, private: bool = True):
         self.unified_msg_origin = umo
         self._selected = selected
+        self._admin = admin
+        self._private = private
+
+    def is_admin(self):
+        return self._admin
+
+    def is_private_chat(self):
+        return self._private
 
     def get_extra(self, key, default=None):
         if key == "selected_provider":
@@ -88,6 +98,12 @@ class AngryEvent:
     """get_extra 抛异常的 event：验证注入链不因此中断。"""
 
     unified_msg_origin = "aiocqhttp:FriendMessage:10001"
+
+    def is_admin(self):
+        return True
+
+    def is_private_chat(self):
+        return True
 
     def get_extra(self, key, default=None):
         raise RuntimeError("extra boom")
@@ -122,7 +138,11 @@ def make_plugin(privacy: dict, store, context=None):
 
 
 def allowed(allowlist, provider="siliconflow/Qwen/Qwen3.5-4B"):
-    return {"allow_health_data_to_llm": True, "llm_provider_allowlist": allowlist}
+    return {
+        "allow_health_data_to_llm": True,
+        "inject_health_context": True,
+        "llm_provider_allowlist": allowlist,
+    }
 
 
 def seed(store: HealthStore) -> dict:
@@ -258,9 +278,11 @@ async def main() -> int:
           f"provider=deepseek/deepseek-chat len={len(degraded_req.extra_user_content_parts)}")
 
     # ── 4. 未授权不注入 ─────────────────────────────────────────────
-    _section("[4/6] 未授权不注入（隐私闸门关闭）")
+    _section("[4/6] 范围与授权不注入（非所有者 / 群聊 / 隐私闸门关闭）")
     closed_plugin = make_plugin(
-        {"allow_health_data_to_llm": False, "llm_provider_allowlist": ["siliconflow"]},
+        {"allow_health_data_to_llm": False,
+         "inject_health_context": True,
+         "llm_provider_allowlist": ["siliconflow"]},
         filled)
     check("隐私闸门关闭", closed_plugin.privacy_gate.is_open is False)
     closed_req = FakeRequest()
@@ -275,6 +297,30 @@ async def main() -> int:
         FakeEvent(selected="siliconflow/Qwen/Qwen3.5-4B"), default_req)
     check("默认配置（无 privacy 分组）同样不注入",
           len(default_req.extra_user_content_parts) == 0)
+
+    off_plugin = make_plugin(
+        {"allow_health_data_to_llm": True,
+         "inject_health_context": False,
+         "llm_provider_allowlist": ["siliconflow"]},
+        filled)
+    off_req = FakeRequest()
+    await off_plugin.on_llm_request(
+        FakeEvent(selected="siliconflow/Qwen/Qwen3.5-4B"), off_req)
+    check("总开关打开但 inject_health_context=false → 不注入（工具模式）",
+          len(off_req.extra_user_content_parts) == 0)
+
+    scope_plugin = make_plugin(allowed(["siliconflow"]), filled)
+    non_owner_req = FakeRequest()
+    await scope_plugin.on_llm_request(
+        FakeEvent(selected="siliconflow/Qwen/Qwen3.5-4B", admin=False), non_owner_req)
+    check("非所有者私聊不注入（防止群友/访客拿到摘要）",
+          len(non_owner_req.extra_user_content_parts) == 0)
+    group_req = FakeRequest()
+    await scope_plugin.on_llm_request(
+        FakeEvent(selected="siliconflow/Qwen/Qwen3.5-4B", private=False), group_req)
+    check("所有者群聊不注入（健康数据只进本人私聊）",
+          len(group_req.extra_user_content_parts) == 0)
+
     check("features.decide：未授权 → not_authorized",
           features.decide(filled, "siliconflow/Qwen/Qwen3.5-4B", ["siliconflow"],
                           False).reason == "not_authorized")

@@ -5,7 +5,8 @@
 覆盖三类情形：
   * 有数据：造今天/昨天/前天的活动，今天的睡眠+心率，某天的部分心率，今天的训练会话；
   * 无数据：空库查活动/训练，显式日期查睡眠（命中无数据分支）；
-  * 身份门：拥有者可正常用命令 / 非拥有者被静默拒绝 / 拿不到结构化身份字段即拒绝。
+  * 身份门：拥有者私聊可正常用命令 / 非拥有者被静默拒绝 / 拥有者群聊被拒绝 /
+    拿不到结构化身份字段即拒绝。
 
 设计约定（沿用本插件其余 selftest）：
   * 只读设计之外的一切都发生在 tempfile 临时目录，不碰真实 health.db；
@@ -83,12 +84,30 @@ def _compact(text: str) -> str:
     return text.replace("\n", " / ")
 
 
-# ── 身份门用例的桩（只放行使用者本人 = 框架管理员）────────────────────────
+# ── 身份门用例的桩（只放行使用者本人私聊 = 框架管理员 + 私聊）──────────────
 class OwnerEvent(StubEvent):
-    """拥有者事件：框架结构化字段 ``is_admin()`` 为 True。"""
+    """拥有者私聊事件：``is_admin()`` 与 ``is_private_chat()`` 均为 True。"""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.unified_msg_origin = "aiocqhttp:FriendMessage:10001"
 
     def is_admin(self) -> bool:
         return True
+
+    def is_private_chat(self) -> bool:
+        return True
+
+
+class GroupOwnerEvent(OwnerEvent):
+    """拥有者但来自群聊：身份门放行，私聊门必须拒绝。"""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.unified_msg_origin = "aiocqhttp:GroupMessage:30003"
+
+    def is_private_chat(self) -> bool:
+        return False
 
 
 class GuestEvent(StubEvent):
@@ -313,6 +332,19 @@ async def main() -> int:
           and "共 1 次训练" in owner_out["训练"],
           f"活动={_compact(owner_out['活动'])} 睡眠={_compact(owner_out['睡眠'])}")
 
+    group_out = {
+        "活动": await run_command(plugin.cmd_health_activity, GroupOwnerEvent("健康活动 3")),
+        "睡眠": await run_command(plugin.cmd_health_sleep, GroupOwnerEvent("健康睡眠")),
+        "训练": await run_command(plugin.cmd_health_training, GroupOwnerEvent("健康训练")),
+    }
+    print(f"  拥有者群聊输出（应为空）：{group_out}")
+    check("拥有者在群聊里调用三个命令 → 一律拒绝，不把数据发进群",
+          all(text == "" for text in group_out.values()),
+          f"输出={group_out}")
+
+    # 拥有者命令已经绑定过目标；清空后再看非拥有者是否会写入（不应写入）。
+    if plugin._reminder_state is not None:
+        plugin._reminder_state.notify_umo = ""
     guest_out = {
         "活动": await run_command(plugin.cmd_health_activity, GuestEvent("健康活动 3")),
         "睡眠": await run_command(plugin.cmd_health_sleep, GuestEvent("健康睡眠")),

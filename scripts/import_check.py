@@ -91,6 +91,12 @@ def _install_astrbot_stub() -> None:
 
             return decorator
 
+        def llm_tool(self, *args, **kwargs):
+            def decorator(func):
+                return func
+
+            return decorator
+
     api_event.filter = _Filter()
 
     api_provider = types.ModuleType("astrbot.api.provider")

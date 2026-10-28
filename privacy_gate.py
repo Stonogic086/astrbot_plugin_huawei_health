@@ -10,9 +10,9 @@
 
 设计约定：
   * 出站一律经过 ``PrivacyGate.check`` / ``require_outbound`` 这一个收口；
-    （现状：健康数据唯一的出站路径是 ``features/llm_injection.py``，它以「闸门打开 +
-    本轮 provider 在白名单」为前置条件，默认不注入；原先 main 里那个没有调用者的
-    预留方法 ``guard_outbound`` 已删除，判定只留本模块一处）
+    （现状：健康数据的两条出站路径——每轮摘要注入 ``features/llm_injection.py``
+    与主动工具结果 ``main.py`` 的 ``@filter.llm_tool`` 方法——都以「闸门打开 +
+    本轮 provider 在白名单」为前置条件；默认不注入、不执行工具）
   * 目的地分三类：已知「本地（本人查看）」白名单 → 放行；已知「外部」→ 看开关；
     未知目的地 → 按外部处理（fail-closed，宁拒绝不误放）；
   * 本模块不 import astrbot、不 import 第三方库，纯逻辑，可被脚本直接调用自检。

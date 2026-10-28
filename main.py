@@ -28,6 +28,12 @@
 分钟）；到点先跑一轮 SyncService.run_once() 再读库，失败/超时一律兜住并退回读旧数据。
 刷新由 main.py 在命令包装器里、读库之前完成，commands/ 层保持不变。
 
+本块新增：LLM 主动工具（features/health_tools.py + 本文件 ``@filter.llm_tool``）。
+模型可在需要时按需查询总览、单日睡眠、睡眠趋势、心率趋势、活动、训练与连接状态；
+工具结果只返回给本轮模型，不主动发消息。身份门（仅所有者）、私聊门、隐私闸门与
+provider 白名单四道门全部通过才返回数据。旧模式「每轮自动注入摘要」由
+``privacy.inject_health_context`` 控制，默认关闭；工具模式不需要每轮注入。
+
 授权页面（前端）已交付：见 pages/huawei-auth（metadata.yaml 里 pages: [huawei-auth]）。
 
 协议层位于 adapters/ 下，移植自 and7ey/huawei_health（MIT，见 LICENSE / NOTICE）。
@@ -78,10 +84,28 @@ from .commands import (
     handle_sleep,
     handle_training,
     plain_result,
+    render_activity,
+    render_sleep,
+    render_training,
+)
+from .features.health_tools import (
+    FOOTER,
+    clamp_days,
+    render_heart_trend,
+    render_overview,
+    render_sleep_trend,
+    render_status,
+    resolve_day,
+    with_hint,
 )
 from .features.llm_injection import build_part, decide, provider_allowed
 from .features.proactive_care import ProactiveCare
-from .privacy_gate import PrivacyGate, gate_from_config, mask_secret
+from .privacy_gate import (
+    DEST_LLM,
+    PrivacyGate,
+    gate_from_config,
+    mask_secret,
+)
 from .reminder import (
     REMINDER_STATE_FILENAME,
     ReminderState,
@@ -1072,17 +1096,17 @@ class HuaweiHealthPlugin(Star):
             return False
         return True
 
-    # ── 查询命令层（身份门 → 读库前按需刷新；不写库、不调用 LLM）──────────
+    # ── 查询命令层（所有者私聊门 → 读库前按需刷新；不写库、不调用 LLM）────
     @filter.command(COMMAND_ACTIVITY)
     async def cmd_health_activity(self, event: AstrMessageEvent):
         """查最近 N 天活动汇总（步数/距离/卡路里/活动时长），默认 3 天。
 
-        身份门：只放行使用者本人（框架管理员，见 ``_is_owner``）。未通过即静默结束，
-        不回任何文案（避免用「被拒绝」当探测信号），也不记录提醒目标——门外记录会让
-        最先私聊的那个人被写成重登提醒的收件人。
+        身份门：只放行使用者本人的私聊（见 ``_is_owner_private_chat``）。未通过即静默
+        结束，不回任何文案（避免用「被拒绝」当探测信号），也不记录提醒目标——门外记录
+        会让最先私聊的那个人被写成重登提醒的收件人。
         """
-        if not self._is_owner(event):
-            logger.debug("[华为运动健康] 非管理员调用 %s，已拒绝", COMMAND_ACTIVITY)
+        if not self._is_owner_private_chat(event):
+            logger.debug("[华为运动健康] 非所有者私聊门未通过，拒绝 %s", COMMAND_ACTIVITY)
             return
         self._remember_notify_target(event)
         hint = await self._refresh_hint()
@@ -1097,8 +1121,8 @@ class HuaweiHealthPlugin(Star):
 
         身份门与拒绝口径同 ``cmd_health_activity``。
         """
-        if not self._is_owner(event):
-            logger.debug("[华为运动健康] 非管理员调用 %s，已拒绝", COMMAND_SLEEP)
+        if not self._is_owner_private_chat(event):
+            logger.debug("[华为运动健康] 非所有者私聊门未通过，拒绝 %s", COMMAND_SLEEP)
             return
         self._remember_notify_target(event)
         hint = await self._refresh_hint()
@@ -1113,8 +1137,8 @@ class HuaweiHealthPlugin(Star):
 
         身份门与拒绝口径同 ``cmd_health_activity``。
         """
-        if not self._is_owner(event):
-            logger.debug("[华为运动健康] 非管理员调用 %s，已拒绝", COMMAND_TRAINING)
+        if not self._is_owner_private_chat(event):
+            logger.debug("[华为运动健康] 非所有者私聊门未通过，拒绝 %s", COMMAND_TRAINING)
             return
         self._remember_notify_target(event)
         hint = await self._refresh_hint()
@@ -1127,18 +1151,210 @@ class HuaweiHealthPlugin(Star):
         ):
             yield result
 
+    # ── LLM 工具层（模型按需调用；默认不注入，保留旧注入开关）──────────
+    async def _tool_denied(self, event: Any) -> str | None:
+        """工具统一前置门：所有者 + 私聊 + 隐私闸门 + provider 白名单。
+
+        返回 ``None`` 表示放行；否则返回一句不含健康数值的拒绝说明。工具结果会进入
+        LLM 上下文，所以这里的门与 ``on_llm_request`` 一样严格；任何一步拿不到就拒绝。
+        """
+        if not self._is_owner(event):
+            return "健康数据仅限管理员本人在私聊中查询。"
+        if not self._is_private_chat(event):
+            return "健康数据仅限私聊查询。"
+        if self.store is None:
+            return "健康数据存储暂不可用（存储层未初始化）。"
+        gate = self.privacy_gate
+        if gate is None or not gate.check(DEST_LLM).allowed:
+            return (
+                "健康数据工具未启用：请让管理员在插件配置 → 隐私中打开"
+                "『允许把健康数据送到 LLM』。"
+            )
+        allowlist = self._config_value("privacy", "llm_provider_allowlist", [])
+        if not provider_allowed(await self._current_provider_id(event), allowlist):
+            return (
+                "当前模型不在健康数据信任名单内：请在插件配置 → 隐私的"
+                "『允许把健康数据送进上下文的模型』中加入当前模型。"
+            )
+        # 与注入路径同一套降级保护：本轮之后可能切到备用模型，只要有备用模型不在
+        # 白名单内，就不把健康数据交给模型（fail-closed）。
+        for fallback_id in self._fallback_provider_ids():
+            if not provider_allowed(fallback_id, allowlist):
+                return (
+                    "当前会话存在未授权的备用模型，本轮不提供健康数据。"
+                    "请把备用模型也加入隐私名单，或关闭备用模型。"
+                )
+        return None
+
+    def _is_private_chat(self, event: Any) -> bool:
+        """判断事件是否来自私聊；结构化字段拿不到时回落到 UMO 字符串。"""
+        structured = is_friend_event(event)
+        if structured is not None:
+            return bool(structured)
+        umo = getattr(event, "unified_msg_origin", "")
+        return bool(umo) and is_friend_umo(str(umo))
+
+    def _is_owner_private_chat(self, event: Any) -> bool:
+        """所有者本人的私聊：命令与旧注入路径共用的最小可见范围。"""
+        return self._is_owner(event) and self._is_private_chat(event)
+
+    async def _tool_refresh_hint(self) -> str:
+        """工具读库前复用命令层的按需刷新；失败只返回轻提示，不阻断查询。"""
+        return await self._refresh_hint()
+
+    @filter.llm_tool(name="health_overview")
+    async def tool_health_overview(self, event: AstrMessageEvent,
+                                   days: int = 3) -> str:
+        """获取最近几天的整体健康概览（活动、睡眠、心率、压力、血氧、训练）。
+
+        当用户问「我最近身体怎么样」「最近健康状态如何」「帮我看看这周的数据」时使用。
+        活动/训练按天数汇总，睡眠/压力/血氧是当天值；数据来自云端日汇总，非实时。
+
+        Args:
+            days(number): 最近几天，1-30，默认 3
+        """
+        denied = await self._tool_denied(event)
+        if denied:
+            return denied
+        hint = await self._tool_refresh_hint()
+        count = clamp_days(days, 3)
+        text = render_overview(
+            self.store,
+            count,
+            training_min_duration_min=self.training_min_duration_min,
+            training_min_distance_m=self.training_min_distance_m,
+        )
+        return with_hint(text, hint)
+
+    @filter.llm_tool(name="health_sleep")
+    async def tool_health_sleep(self, event: AstrMessageEvent,
+                                day: str = "") -> str:
+        """查询某一天的睡眠和心率日值（时长、评分、效率、HRV、血氧、静息心率等）。
+
+        用户问「昨晚睡得怎么样」「今天睡眠数据」时使用；默认查今天。
+
+        Args:
+            day(string): 日期，格式 YYYY-MM-DD；留空表示今天，也支持「昨天」
+        """
+        denied = await self._tool_denied(event)
+        if denied:
+            return denied
+        hint = await self._tool_refresh_hint()
+        day_text = resolve_day(day)
+        text = f"{render_sleep(self.store, day_text).rstrip()}\n\n{FOOTER}"
+        return with_hint(text, hint)
+
+    @filter.llm_tool(name="health_sleep_trend")
+    async def tool_health_sleep_trend(self, event: AstrMessageEvent,
+                                      days: int = 7) -> str:
+        """查询最近几天的睡眠趋势（逐日时长、评分、效率、HRV、血氧及平均值）。
+
+        用户问「最近一周睡得怎么样」「睡眠有没有变好」时使用。
+
+        Args:
+            days(number): 最近几天，1-30，默认 7
+        """
+        denied = await self._tool_denied(event)
+        if denied:
+            return denied
+        hint = await self._tool_refresh_hint()
+        text = render_sleep_trend(self.store, clamp_days(days, 7))
+        return with_hint(text, hint)
+
+    @filter.llm_tool(name="health_heart")
+    async def tool_health_heart(self, event: AstrMessageEvent,
+                                days: int = 7) -> str:
+        """查询最近几天的静息心率、日间心率、最高/最低心率趋势。
+
+        用户问「最近心率怎么样」「静息心率有没有变化」时使用。
+
+        Args:
+            days(number): 最近几天，1-30，默认 7
+        """
+        denied = await self._tool_denied(event)
+        if denied:
+            return denied
+        hint = await self._tool_refresh_hint()
+        text = render_heart_trend(self.store, clamp_days(days, 7))
+        return with_hint(text, hint)
+
+    @filter.llm_tool(name="health_activity")
+    async def tool_health_activity(self, event: AstrMessageEvent,
+                                   days: int = 3) -> str:
+        """查询最近几天的步数、距离、卡路里和活动时长汇总。
+
+        用户问「最近走了多少步」「活动量怎么样」时使用。
+
+        Args:
+            days(number): 最近几天，1-30，默认 3
+        """
+        denied = await self._tool_denied(event)
+        if denied:
+            return denied
+        hint = await self._tool_refresh_hint()
+        text = render_activity(self.store, clamp_days(days, 3))
+        return with_hint(f"{text.rstrip()}\n\n{FOOTER}", hint)
+
+    @filter.llm_tool(name="health_training")
+    async def tool_health_training(self, event: AstrMessageEvent,
+                                   days: int = 7) -> str:
+        """查询最近几天的运动训练记录（运动类型、时长、距离、卡路里、心率）。
+
+        用户问「最近练了什么」「这周运动记录」时使用。
+
+        Args:
+            days(number): 最近几天，1-30，默认 7
+        """
+        denied = await self._tool_denied(event)
+        if denied:
+            return denied
+        hint = await self._tool_refresh_hint()
+        text = render_training(
+            self.store,
+            clamp_days(days, 7),
+            min_duration_min=self.training_min_duration_min,
+            min_distance_m=self.training_min_distance_m,
+        )
+        return with_hint(f"{text.rstrip()}\n\n{FOOTER}", hint)
+
+    @filter.llm_tool(name="health_status")
+    async def tool_health_status(self, event: AstrMessageEvent) -> str:
+        """检查华为健康连接状态、最近同步时间和本地数据覆盖范围（不返回健康数值）。
+
+        当用户问「华为健康连上了吗」「数据同步了吗」「为什么没有数据」时使用。
+        """
+        denied = await self._tool_denied(event)
+        if denied:
+            return denied
+        text = render_status(
+            self.store,
+            refresh_token_present=bool(self.refresh_token),
+            refresh_expires_at=self.refresh_token_expires_at,
+            sync_enabled=bool(self.enable_auto_sync),
+            sync_interval_minutes=self.sync_interval_minutes,
+        )
+        return text
+
     # ── 健康数据进 LLM 上下文（唯一注入点；多重前置门 + fail-closed）──────
     @filter.on_llm_request()
     async def on_llm_request(self, event: AstrMessageEvent, req: Any) -> None:
-        """把本轮健康摘要注入 LLM 上下文；任一前置门不满足即静默不注入。
+        """把本轮健康摘要注入 LLM 上下文（旧模式）；任一前置门不满足即静默不注入。
 
-        前置门顺序：授权（隐私闸门打开）→ 本轮实际 provider 在白名单内 → 摘要非空 →
-        追加带 mark_as_temp 的临时 part（不进长期会话历史）。框架能力探测不在这里做：
+        默认不注入：``privacy.inject_health_context`` 为 false 时直接返回，让模型改用
+        主动工具按需查询。打开开关后，前置门顺序为：所有者本人 → 私聊 → 授权（隐私
+        闸门打开）→ 本轮实际 provider 在白名单内 → 摘要非空 → 追加带 mark_as_temp 的
+        临时 part（不进长期会话历史）。框架能力探测不在这里做：
         ``features.llm_injection.build_part`` 自己探测 TextPart / mark_as_temp，任一
-        拿不到就返回 None，本方法据此整轮不注入（fail-closed）。全程 try/except：任何一步
-        失败都退化成「不带健康数据的普通回答」，不报错、不中断聊天。
+        拿不到就返回 None，本方法据此整轮不注入（fail-closed）。全程 try/except：任何
+        一步失败都退化成「不带健康数据的普通回答」，不报错、不中断聊天。
         """
         try:
+            if not self._is_owner_private_chat(event):
+                return
+            if self._config_value(
+                "privacy", "inject_health_context", False
+            ) is not True:
+                return
             gate = self.privacy_gate
             authorized = bool(gate is not None and gate.is_open)
             allowlist = self._config_value("privacy", "llm_provider_allowlist", [])
